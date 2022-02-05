@@ -27,7 +27,7 @@ struct Args {
 }
 
 fn start_process(sender: Sender<String>, reciever: Receiver<String>, cmd: &Path, args: Vec<&str>) {
-    let child = Command::new(cmd)
+    let mut child = Command::new(cmd)
         .args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -37,25 +37,17 @@ fn start_process(sender: Sender<String>, reciever: Receiver<String>, cmd: &Path,
     println!("Started process: {:?} : {}", cmd, child.id());
 
     thread::spawn(move || {
-        let mut f = BufReader::new(child.stdout.unwrap());
-        let mut stdin = child.stdin.unwrap();
-        // for line in reciever {
-        //     let mut buf = String::new();
-        //     match f.read_line(&mut buf) {
-        //         Ok(_) => {
-        //             sender.send(buf).unwrap();
-        //         },
-        //         Err(e) => {
-        //             println!("Error!: {:?}", e);
-        //             break;
-        //         }
-        //     }
-        //     stdin.write_all(line.as_bytes()).unwrap();
-        // }
+        let mut f = BufReader::new(child.stdout.take().unwrap());
+        let mut stdin = child.stdin.take().unwrap();
 
         let mut buf = String::new();
         while f.read_line(&mut buf).is_ok() {
             sender.send(buf.clone()).unwrap();
+            println!("{:?}", child.try_wait());
+            if let Ok(Some(s)) = child.try_wait() {
+                println!("Exited with code: {}", s);
+                break;
+            }
             let recvd = reciever.recv().unwrap();
             println!("{}", recvd);
             stdin.write_all(recvd.as_bytes()).unwrap();
@@ -83,10 +75,7 @@ fn test(cmd: &Path, wordsfile: &Path, word: String) -> std::io::Result<i32> {
 
         guess = guess.chars().map(|c| c.to_ascii_lowercase()).collect();
 
-        i += 1;
-
         for (ch_g, ch_w) in guess.chars().zip(word.chars()) {
-            println!("{}:{}", ch_g, ch_w);
             if ch_g == ch_w {
                 reply.push('g');
                 matched.push(ch_g);
@@ -95,12 +84,16 @@ fn test(cmd: &Path, wordsfile: &Path, word: String) -> std::io::Result<i32> {
             } else {
                 reply.push('b');
             }
-            println!("{}, {}", reply, matched);
         }
 
         reply.push('\n');
 
-        tx2.send(reply).unwrap();
+        tx2.send(reply.clone()).unwrap();
+
+        if reply == "ggggg" {
+            break;
+        }
+        i += 1;
     }
 
     Ok(i)
@@ -116,8 +109,12 @@ fn main() {
     let runs: Vec<PathBuf> = runs_s.split("\n").map(|s| PathBuf::from(s)).collect();
     let words: Vec<String> = words_s.split(" ").map(|s| s.to_string()).collect();
 
+    println!("{:?}", runs);
+
     for c in runs.iter() {
-        let i = test(&runspath.join(c), &args.wordsfile, "franc".to_string()).unwrap();
-        println!("{:?}: {}", c, i);
+        if *c != PathBuf::from("") {
+            let i = test(&runspath.join(c), &args.wordsfile, "woman".to_string()).unwrap();
+            println!("{:?}: {}", c, i);
+        }
     }
 }
