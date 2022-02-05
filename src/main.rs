@@ -15,6 +15,7 @@ use std::{
     thread
 };
 use clap::Parser;
+use rand::seq::SliceRandom;
 
 #[derive(Parser, Debug)]
 #[clap(version, about, long_about = None)]
@@ -43,20 +44,24 @@ fn start_process(sender: Sender<String>, reciever: Receiver<String>, cmd: &Path,
         let mut buf = String::new();
         while f.read_line(&mut buf).is_ok() {
             sender.send(buf.clone()).unwrap();
-            println!("{:?}", child.try_wait());
             if let Ok(Some(s)) = child.try_wait() {
-                println!("Exited with code: {}", s);
                 break;
             }
             let recvd = reciever.recv().unwrap();
-            println!("{}", recvd);
+            print!("{}", recvd);
             stdin.write_all(recvd.as_bytes()).unwrap();
             buf = String::new();
         }
     });
 }
 
-fn test(cmd: &Path, wordsfile: &Path, word: String) -> std::io::Result<i32> {
+#[derive(Debug)]
+enum TestError {
+    EarlyExit,
+}
+
+
+fn test(cmd: &Path, wordsfile: &Path, word: String) -> Result<i32, TestError> {
     println!("{:?}, {:?}", cmd, wordsfile);
 
     let mut i: i32 = 0;
@@ -69,6 +74,7 @@ fn test(cmd: &Path, wordsfile: &Path, word: String) -> std::io::Result<i32> {
     start_process(tx1, rx2, cmd, vec![wordsfile.to_str().unwrap()]);
 
     for mut guess in rx1 {
+        guess.pop();
         println!("{}", guess);
         reply = String::new();
         matched = String::new();
@@ -87,13 +93,14 @@ fn test(cmd: &Path, wordsfile: &Path, word: String) -> std::io::Result<i32> {
         }
 
         reply.push('\n');
-
-        tx2.send(reply.clone()).unwrap();
-
-        if reply == "ggggg" {
-            break;
-        }
+        let tx_r = tx2.send(reply.clone());
         i += 1;
+
+        if reply == "ggggg\n" {
+            return Ok(i);
+        } else if tx_r.is_err() {
+            return Err(TestError::EarlyExit);
+        }
     }
 
     Ok(i)
@@ -107,14 +114,14 @@ fn main() {
 
     let runspath = &args.runfile.parent().unwrap();
     let runs: Vec<PathBuf> = runs_s.split("\n").map(|s| PathBuf::from(s)).collect();
-    let words: Vec<String> = words_s.split(" ").map(|s| s.to_string()).collect();
+    let words: Vec<String> = words_s.split("\n").map(|s| s.to_string()).collect();
 
     println!("{:?}", runs);
 
     for c in runs.iter() {
         if *c != PathBuf::from("") {
-            let i = test(&runspath.join(c), &args.wordsfile, "woman".to_string()).unwrap();
-            println!("{:?}: {}", c, i);
+            let i = test(&runspath.join(c), &args.wordsfile, words.choose(&mut rand::thread_rng()).unwrap().clone()).unwrap();
+            println!("{:?}: {:?}", c, i);
         }
     }
 }
