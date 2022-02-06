@@ -16,6 +16,8 @@ use std::{
 };
 use clap::Parser;
 use rand::seq::SliceRandom;
+use futures::future::join_all;
+use tokio;
 
 #[derive(Parser, Debug)]
 #[clap(version, about, long_about = None)]
@@ -27,7 +29,7 @@ struct Args {
     wordsfile: PathBuf,
 }
 
-fn start_process(sender: Sender<Option<String>>, reciever: Receiver<Option<String>>, cmd: &Path, args: Vec<&str>) {
+fn start_process(sender: Sender<Option<String>>, reciever: Receiver<Option<String>>, cmd: &str, args: Vec<&str>) {
     let mut child = Command::new(cmd)
         .args(args)
         .stdin(Stdio::piped())
@@ -63,8 +65,8 @@ enum TestError {
 }
 
 
-fn test(cmd: &Path, wordsfile: &Path, word: String) -> Result<i32, TestError> {
-
+async fn test(cmd: &str, wordsfile: &Path, word: String) -> Result<i32, TestError> {
+    println!("Testing: {}", word);
     let mut i: i32 = 0;
     let mut reply: String;
     let mut matched: String;
@@ -99,10 +101,12 @@ fn test(cmd: &Path, wordsfile: &Path, word: String) -> Result<i32, TestError> {
             if reply == "ggggg\n" {
                 let _tx_r = tx2.send(Some(reply.clone()));
                 let _tx_r = tx2.send(None);
+                println!("Done: {}", word);
                 return Ok(i);
             } else {
                 let tx_r = tx2.send(Some(reply.clone()));
                 if let Err(_) = tx_r {
+                    println!("Done: {}", word);
                     return Err(TestError::EarlyExit);
                 }
             }
@@ -111,10 +115,30 @@ fn test(cmd: &Path, wordsfile: &Path, word: String) -> Result<i32, TestError> {
         }
     }
 
+    println!("Done: {}", word);
+
     Ok(i)
 }
 
-fn main() {
+async fn test_multi(cmd: String, wordsfile: &Path, words: Vec<&String>) -> i32 {
+    let mut score: i32 = 0;
+    let mut tests = vec![];
+    for word in words.iter() {
+        tests.push(test(&cmd, wordsfile, word.to_string()))
+    }
+    let results = join_all(tests.into_iter()).await;
+    for r in results {
+        if let Ok(i) = r {
+            score += i;
+        } else {
+            score += 20;
+        }
+    }
+    return score;
+}
+
+#[tokio::main]
+async fn main() {
     let args = Args::parse();
 
     let runs_s = fs::read_to_string(&args.runfile).expect("Failed to read file");
@@ -125,26 +149,20 @@ fn main() {
     let words: Vec<String> = words_s.split("\n").map(|s| s.to_string()).collect();
 
     let mut scores: HashMap<String, i32> = HashMap::new();
+    let mut futures = Vec::new();
     let test_words: Vec<&String> = words.choose_multiple(&mut rand::thread_rng(), 20).collect();
 
     for c in runs.iter() {
         if *c != PathBuf::from("") {
-            for s in test_words.iter() {
-                let test_result = test(&runspath.join(c), &args.wordsfile, s.to_string());
-                let i;
-
-                match test_result {
-                    Ok(out) => {i = out}
-                    Err(TestError::EarlyExit) => {i = 20}
-                }
-                if scores.contains_key(c.to_str().unwrap()) {
-                    let score = scores.get_mut(c.to_str().unwrap()).unwrap();
-                    *score += i;
-                } else {
-                    scores.insert(c.to_str().unwrap().to_string(), i);
-                }
-            }
+            let runner = runspath.join(c).to_str().unwrap().to_string();
+            futures.push(test_multi(runner, &args.wordsfile, test_words.clone()));
         }
+    }
+
+    let results = join_all(futures).await;
+
+    for (i, r) in results.into_iter().enumerate() {
+        scores.insert(runs[i].to_str().unwrap().to_string(), r);
     }
 
     println!("{:?}", scores)
