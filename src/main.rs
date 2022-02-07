@@ -69,7 +69,6 @@ async fn test(cmd: &str, wordsfile: &Path, word: String) -> Result<i32, TestErro
     println!("Testing: {}", word);
     let mut i: i32 = 0;
     let mut reply: String;
-    let mut matched: String;
 
     let (tx1, rx1): (Sender<Option<String>>, Receiver<Option<String>>) = channel();
     let (tx2, rx2): (Sender<Option<String>>, Receiver<Option<String>>) = channel();
@@ -80,15 +79,13 @@ async fn test(cmd: &str, wordsfile: &Path, word: String) -> Result<i32, TestErro
         if let Some(mut guess) = g {
             guess.pop();
             reply = String::new();
-            matched = String::new();
 
             guess = guess.chars().map(|c| c.to_ascii_lowercase()).collect();
 
             for (ch_g, ch_w) in guess.chars().zip(word.chars()) {
                 if ch_g == ch_w {
                     reply.push('g');
-                    matched.push(ch_g);
-                } else if word.find(ch_g).is_some() && matched.find(ch_g).is_none() {
+                } else if word.find(ch_g).is_some() {
                     reply.push('y');
                 } else {
                     reply.push('b');
